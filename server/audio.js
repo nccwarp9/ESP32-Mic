@@ -1,10 +1,6 @@
 // make sure you have Node.js Installed!
 // Get the IP address of your photon, and put it here:
 
-// CLI command to get your photon's IP address
-//
-// particle get MY_DEVICE_NAME ipAddress
-
 // Put your IP here!
 var settings = {
 	ip: "192.168.1.6",
@@ -19,10 +15,8 @@ var settings = {
 //	http://stackoverflow.com/questions/19548755/nodejs-write-binary-data-into-writablestream-with-buffer
 
 var fs = require("fs");
-
 var samplesLength = 1000;
 var sampleRate = 8000;
-
 var outStream = fs.createWriteStream("test.wav");
 
 var writeHeader = function() {
@@ -64,19 +58,10 @@ var writeHeader = function() {
 	//b.writeUInt32LE(40, samplesLength * 2);
 	b.writeUInt32LE(0, 40);
 
-
 	outStream.write(b.slice(0, 50));
 };
 
-
-
-
-
 writeHeader(outStream);
-
-
-
-
 
 var net = require('net');
 console.log("connecting...");
@@ -95,9 +80,6 @@ client = net.connect(settings.port, settings.ip, function () {
         }
     });
 });
-
-
-
 
 setTimeout(function() {
 	console.log('recorded for 10 seconds');

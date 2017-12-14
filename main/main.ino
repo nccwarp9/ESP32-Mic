@@ -23,6 +23,7 @@
 #define AUDIO_BUFFER_MAX 8192
 #define SINGLE_PACKET_MIN 512
 #define SINGLE_PACKET_MAX 1024
+SimpleRingBuffer audio_buffer;
 
 /*
 .##.....##....###....########.
@@ -45,7 +46,6 @@ const char* password = "cupi0880";
 
 WiFiClient audioClient;
 WiFiClient checkClient;
-SimpleRingBuffer audio_buffer;
 WiFiServer audioServer(TCP_SERVER_PORT);
 
 /*
@@ -73,6 +73,16 @@ void IRAM_ATTR onTimer(){
   // It is safe to use digitalRead/Write here if you want to toggle an output
 }
 
+
+/*
+..######..########.########.##.....##.########.
+.##....##.##..........##....##.....##.##.....##
+.##.......##..........##....##.....##.##.....##
+..######..######......##....##.....##.########.
+.......##.##..........##....##.....##.##.......
+.##....##.##..........##....##.....##.##.......
+..######..########....##.....#######..##.......
+ */
 void setup() {
     int mySampleRate = AUDIO_TIMING_VAL;
 /*
@@ -165,6 +175,7 @@ void loop() {
     }
     #endif
 
+    // SEND DATA
     sendEvery(100);
 }
 
