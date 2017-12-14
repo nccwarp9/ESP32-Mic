@@ -1,6 +1,10 @@
 // make sure you have Node.js Installed!
 // Get the IP address of your photon, and put it here:
 
+// CLI command to get your photon's IP address
+//
+// particle get MY_DEVICE_NAME ipAddress
+
 // Put your IP here!
 var settings = {
 	ip: "192.168.1.6",
@@ -15,18 +19,24 @@ var settings = {
 //	http://stackoverflow.com/questions/19548755/nodejs-write-binary-data-into-writablestream-with-buffer
 
 var fs = require("fs");
+
 var samplesLength = 1000;
-var sampleRate = 8000;
+var sampleRate = 16000;
+var bitsPerSample = 8;
+
+var numChannels = 1;
+
 var outStream = fs.createWriteStream("test.wav");
 
 var writeHeader = function() {
 	var b = new Buffer(1024);
 	b.write('RIFF', 0);
 	/* file length */
-	b.writeUInt32LE(32 + samplesLength * 2, 4);
+	b.writeUInt32LE(32 + samplesLength * numChannels, 4);
 	//b.writeUint32LE(0, 4);
 
 	b.write('WAVE', 8);
+
 	/* format chunk identifier */
 	b.write('fmt ', 12);
 
@@ -43,13 +53,15 @@ var writeHeader = function() {
 	b.writeUInt32LE(sampleRate, 24);
 
 	/* byte rate (sample rate * block align) */
-	b.writeUInt32LE(sampleRate * 2, 28);
+	b.writeUInt32LE(sampleRate * 1, 28);
+	//b.writeUInt32LE(sampleRate * 2, 28);
 
 	/* block align (channel count * bytes per sample) */
-	b.writeUInt16LE(2, 32);
+	b.writeUInt16LE(numChannels * 1, 32);
+	//b.writeUInt16LE(2, 32);
 
 	/* bits per sample */
-	b.writeUInt16LE(16, 34);
+	b.writeUInt16LE(bitsPerSample, 34);
 
 	/* data chunk identifier */
 	b.write('data', 36);
@@ -57,6 +69,7 @@ var writeHeader = function() {
 	/* data chunk length */
 	//b.writeUInt32LE(40, samplesLength * 2);
 	b.writeUInt32LE(0, 40);
+
 
 	outStream.write(b.slice(0, 50));
 };
@@ -70,16 +83,18 @@ client = net.connect(settings.port, settings.ip, function () {
 
     client.on("data", function (data) {
         try {
-			console.log("GOT DATA");
+			//console.log("GOT DATA");
 			outStream.write(data);
 			//outStream.flush();
-			console.log("got chunk of " + data.toString('hex'));
+			console.log("got chunk of " + data.length + " bytes ");
+			console.log("got chunk of " + data.toString('HEX'));
 		}
         catch (ex) {
             console.error("Er!" + ex);
         }
     });
 });
+
 
 setTimeout(function() {
 	console.log('recorded for 10 seconds');
