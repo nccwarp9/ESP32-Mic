@@ -1,5 +1,4 @@
 #include <driver/adc.h>
-#include <SimpleRingBuffer.h>
 
 #define SERIAL_BAUD 115200
 /*
