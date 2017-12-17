@@ -1,8 +1,9 @@
 #include <WiFi.h>
-#include <math.h>
+#include <WiFiUdp.h>
 #include <driver/adc.h>
 #include <SimpleRingBuffer.h>
 
+#define SERIAL_BAUD 115200
 /*
 ....###....##.....##.########..####..#######.....##.....##....###....########.
 ...##.##...##.....##.##.....##..##..##.....##....##.....##...##.##...##.....##
@@ -19,8 +20,7 @@
 //#define AUDIO_TIMING_VAL 50  /* 20,000 hz */
 
 #define SERIAL_DEBUG_ON true
-#define TCP_SERVER_PORT 8088
-#define AUDIO_BUFFER_MAX 8192
+#define AUDIO_BUFFER_MAX 16000  //8192
 #define SINGLE_PACKET_MIN 512
 #define SINGLE_PACKET_MAX 1024
 SimpleRingBuffer audio_buffer;
@@ -35,18 +35,18 @@ SimpleRingBuffer audio_buffer;
 ....###....##.....##.##.....##
 */
 volatile int counter = 0;
+volatile bool send = false;
 unsigned int lastLog = 0;
-unsigned long lastSend = millis();
-unsigned int lastClientCheck = 0;
+const char * udpAddress = "192.168.1.9";
+const int udpPort = 8080;
+
+const char* ssid     = "cupi";
+const char* password = "*";
 
 uint8_t txBuffer[SINGLE_PACKET_MAX + 1];
 
-const char* ssid     = "cupi";
-const char* password = "cupi0880";
-
-WiFiClient audioClient;
-WiFiClient checkClient;
-WiFiServer audioServer(TCP_SERVER_PORT);
+//create UDP instance
+WiFiUDP udp;
 
 /*
 .########.####.##.....##.########.########.
@@ -62,15 +62,21 @@ volatile SemaphoreHandle_t timerSemaphore;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR onTimer(){
-  // Increment the counter and set the time of ISR
-  portENTER_CRITICAL_ISR(&timerMux);
+    // Increment the counter and set the time of ISR
+    portENTER_CRITICAL_ISR(&timerMux);
   
-  readMic(); 
+    //read audio from ESP32 ADC 
+    uint16_t value = adc1_get_voltage(ADC1_CHANNEL_0);
+    // value = map(value, 0, 4095, 0, 255);
+    audio_buffer.put(value);
+    if (audio_buffer.getSize() > SINGLE_PACKET_MIN ){
+      send = true;
+    }
   
-  portEXIT_CRITICAL_ISR(&timerMux);
-  // Give a semaphore that we can check in the loop
-  xSemaphoreGiveFromISR(timerSemaphore, NULL);
-  // It is safe to use digitalRead/Write here if you want to toggle an output
+    portEXIT_CRITICAL_ISR(&timerMux);
+    // Give a semaphore that we can check in the loop
+    xSemaphoreGiveFromISR(timerSemaphore, NULL);
+    // It is safe to use digitalRead/Write here if you want to toggle an output
 }
 
 
@@ -85,6 +91,12 @@ void IRAM_ATTR onTimer(){
  */
 void setup() {
     int mySampleRate = AUDIO_TIMING_VAL;
+
+    Serial.begin(SERIAL_BAUD);
+    Serial.println("I was built on " __DATE__ " at " __TIME__ "");
+    Serial.print("Init Serial Communication:");
+    Serial.println(SERIAL_BAUD);
+
 /*
 .##......##.####.########.####
 .##..##..##..##..##........##.
@@ -94,7 +106,6 @@ void setup() {
 .##..##..##..##..##........##.
 ..###..###..####.##.......####
 */
-    Serial.begin(115200);
     WiFi.begin(ssid, password);
     Serial.print("Connecting to ");
     Serial.println(ssid);
@@ -119,14 +130,20 @@ void setup() {
     adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_11db);
     
     /* start Server */
+    Serial.print("Init Audio Buffer:");
+    Serial.println(AUDIO_BUFFER_MAX);
     audio_buffer.init(AUDIO_BUFFER_MAX);
-    audioServer.begin();
-
+    
+    Serial.print("Init Hardware Timer:");
+    Serial.println(mySampleRate);
     timerSemaphore = xSemaphoreCreateBinary();
     timer = timerBegin(0, 80, true);
     timerAttachInterrupt(timer, &onTimer, true);
     timerAlarmWrite(timer, mySampleRate, true);
     timerAlarmEnable(timer);
+
+    udp.begin(udpPort);
+    Serial.println("Setup done!");
 }
 
 /*
@@ -139,22 +156,23 @@ void setup() {
 .########..#######...#######..##.......
 */
 void loop() {
+    uint8_t buffer[50] = "hello world";
     unsigned int now = millis();
 
     if (xSemaphoreTake(timerSemaphore, 0) == pdTRUE){
         portENTER_CRITICAL(&timerMux);
         portEXIT_CRITICAL(&timerMux);
         // Print it
-        Serial.print(".");
+        //Serial.print(".");
     }
 
-    // CHECK IF CONNECTED
-    if ((now - lastClientCheck) > 100) {
-        lastClientCheck = now;
-        checkClient = audioServer.available();
-        if (checkClient) {
-            audioClient = checkClient;
-        }
+    memset(buffer, 0, 50);
+    //processing incoming packet, must be called before reading the buffer
+    udp.parsePacket();
+    //receive response from server, it will be HELLO WORLD
+    if(udp.read(buffer, 50) > 0){
+      Serial.print("Server to client: ");
+      Serial.println((char *)buffer);
     }
 
 /*
@@ -166,57 +184,24 @@ void loop() {
 .##.....##.##.......##.....##.##.....##.##....##.
 .########..########.########...#######...######..
 */
+//NOT ONLY DEBUG BUT ALSO SENDS AUDIO
+
     #if SERIAL_DEBUG_ON
     if ((now - lastLog) > 1000) {
         lastLog = now;
         Serial.println("counter was " + String(counter));
+        Serial.println("Sending Data:");
         Serial.println("audio buffer size is now " + String(audio_buffer.getSize()));
-        counter = 0;
+        counter = 0;   
     }
     #endif
 
-    // SEND DATA
-    sendEvery(100);
-}
-
-/*
-.########..########....###....########.....##.....##.####..######.
-.##.....##.##.........##.##...##.....##....###...###..##..##....##
-.##.....##.##........##...##..##.....##....####.####..##..##......
-.########..######...##.....##.##.....##....##.###.##..##..##......
-.##...##...##.......#########.##.....##....##.....##..##..##......
-.##....##..##.......##.....##.##.....##....##.....##..##..##....##
-.##.....##.########.##.....##.########.....##.....##.####..######.
-*/
-void readMic(void) {
-    //read audio from ESP32 ADC 
-    uint16_t value = adc1_get_voltage(ADC1_CHANNEL_0);
-   // value = map(value, 0, 4095, 0, 255);
-    audio_buffer.put(value);
-    counter++;
-}
-
-/*
-..######..########.##....##.########........###....##.....##.########..####..#######.
-.##....##.##.......###...##.##.....##......##.##...##.....##.##.....##..##..##.....##
-.##.......##.......####..##.##.....##.....##...##..##.....##.##.....##..##..##.....##
-..######..######...##.##.##.##.....##....##.....##.##.....##.##.....##..##..##.....##
-.......##.##.......##..####.##.....##....#########.##.....##.##.....##..##..##.....##
-.##....##.##.......##...###.##.....##....##.....##.##.....##.##.....##..##..##.....##
-..######..########.##....##.########.....##.....##..#######..########..####..#######.
-*/
-void sendEvery(int delay) {
-    // if it's been longer than 100ms since our last broadcast, then broadcast.
-    if ((millis() - lastSend) >= delay) {
-        sendAudio();
-        lastSend = millis();
+    if (send){
+      sendAudio(); // SEND AUDIO DATA
     }
 }
 
 void sendAudio(void) {
-    if (!audioClient) {
-        return;
-    }
     int count = 0;
     int storedSoundBytes = audio_buffer.getSize();
 
@@ -229,12 +214,14 @@ void sendAudio(void) {
         // read out max packet size at a time
         // for loop should be faster, since we can check our buffer size just once?
         int size = _min(audio_buffer.getSize(), SINGLE_PACKET_MAX);
-        int c = 0;
         for(int c = 0; c < size; c++) {
             txBuffer[c] = audio_buffer.get();
         }
         count += size;
         // send it!
-        audioClient.write(txBuffer, size);
+        udp.beginPacket(udpAddress, udpPort);
+        udp.write(txBuffer, size);
+        udp.endPacket();
     }
+    send = false;
 }
